@@ -1,6 +1,16 @@
-import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
+import { cpSync, mkdirSync, readFileSync, unlinkSync } from "node:fs"
 import { dirname, join } from "node:path"
-import { buildFrontmatter, type MemoryType } from "./frontmatter.js"
+import { writeFileAtomicSync } from "../util/exclusiveFile.js"
+import {
+  buildFrontmatter,
+  editFrontmatter,
+  FRONTMATTER_MAX_LINES,
+  type MemoryType,
+  ORIGIN,
+  type ParsedMemoryFile,
+  parseFrontmatter,
+  parseMemoryType,
+} from "./frontmatter.js"
 import { buildIndexPointer, indexHasPointer, readIndexFile, removeIndexLine, upsertIndexLine } from "./indexFile.js"
 import {
   ENTRYPOINT_NAME,
@@ -10,7 +20,14 @@ import {
   resolveMemoryFilePath,
   sanitizePath,
 } from "./paths.js"
-import { formatMemoryManifest, type MemoryEntry, type MemoryHeader, readMemoryEntry, scanMemoryFiles } from "./scan.js"
+import {
+  formatMemoryManifest,
+  type MemoryEntry,
+  type MemoryHeader,
+  nameFromFilename,
+  readMemoryEntry,
+  scanMemoryFiles,
+} from "./scan.js"
 
 export type SaveMemoryInput = {
   fileName: string
@@ -27,12 +44,20 @@ export type SaveMemoryResult = {
   unchanged: boolean
 }
 
+export type DeleteMemoryResult = {
+  deleted: boolean
+  // Where a copy was kept, when the memory was created by another tool.
+  trashedTo?: string
+}
+
 export type ListOptions = {
   sort?: "name" | "mtime"
 }
 
 export type MemoryStoreOptions = {
   claudeConfigDir: string
+  // Clock for the `modified` stamp; injectable for tests.
+  now?: () => Date
 }
 
 // Owns the resolved memory paths for one project. Path resolution (git root, worktree canonical
@@ -48,12 +73,14 @@ export class MemoryStore {
   // Plugin-private state (extraction watermarks, auto-dream gate) lives next to, not inside, the
   // Claude Code project directory so Claude Code never sees it.
   readonly stateDir: string
+  private readonly now: () => Date
 
   constructor(memoryRoot: string, options: MemoryStoreOptions) {
     this.memoryRoot = memoryRoot
     this.gitRoot = findGitRoot(memoryRoot)
     this.canonicalRoot = findCanonicalGitRoot(memoryRoot) ?? memoryRoot
     this.claudeConfigDir = options.claudeConfigDir
+    this.now = options.now ?? (() => new Date())
     const projectKey = sanitizePath(this.canonicalRoot)
     this.projectDir = join(this.claudeConfigDir, "projects", projectKey)
     this.memoryDir = join(this.projectDir, "memory")
@@ -93,32 +120,58 @@ export class MemoryStore {
       throw new Error("Memory name is required")
     }
 
-    const fileContent = `${buildFrontmatter(input)}\n\n${input.content.trim()}\n`
-    if (Buffer.byteLength(fileContent, "utf-8") > MAX_MEMORY_FILE_BYTES) {
-      throw new Error(`Memory file content exceeds the ${MAX_MEMORY_FILE_BYTES}-byte limit`)
-    }
-
+    const existing = readTextFile(filePath)
+    const parsed = existing === null ? null : parseFrontmatter(existing)
     const pointer = buildIndexPointer(relativePath, input.name, input.description)
-    if (this.isUnchanged(filePath, fileContent, pointer)) {
+    if (parsed !== null && this.isUnchanged(parsed, relativePath, input, pointer)) {
       return { filePath, fileName: relativePath, unchanged: true }
     }
 
-    mkdirSync(dirname(filePath), { recursive: true })
-    writeFileSync(filePath, fileContent, "utf-8")
+    const modified = this.now().toISOString()
+    const fileContent =
+      existing === null || parsed === null
+        ? `${buildFrontmatter({ ...input, modified })}\n\n${input.content.trim()}\n`
+        : updatedFileContent(existing, parsed, input, modified)
+    if (Buffer.byteLength(fileContent, "utf-8") > MAX_MEMORY_FILE_BYTES) {
+      throw new Error(`Memory file content exceeds the ${MAX_MEMORY_FILE_BYTES}-byte limit`)
+    }
+    // Line-level edits keep every other frontmatter line, so the block can outgrow the window both
+    // this plugin and Claude Code read it in; refuse rather than write a file they would both
+    // treat as having no frontmatter.
+    if (!parseFrontmatter(fileContent).hasFrontmatter) {
+      throw new Error(
+        `Memory "${relativePath}" frontmatter would exceed ${FRONTMATTER_MAX_LINES} lines; trim its frontmatter first`,
+      )
+    }
+
+    writeFileAtomicSync(filePath, fileContent)
     this.writeIndex(upsertIndexLine(this.readIndex(), relativePath, pointer))
 
     return { filePath, fileName: relativePath, unchanged: false }
   }
 
-  delete(fileName: string): boolean {
+  // Deleting a memory this plugin did not create (Claude Code's, dsh's, a hand-written one) first
+  // keeps a copy under the plugin's state directory, as dsh-unified-memory does, so an auto-dream
+  // prune can never silently destroy another tool's memory.
+  delete(fileName: string): DeleteMemoryResult {
     const { relativePath, filePath } = resolveMemoryFilePath(this.memoryDir, fileName)
+    const existing = readTextFile(filePath)
+    if (existing === null) return { deleted: false }
+
+    let trashedTo: string | undefined
+    if (parseFrontmatter(existing).frontmatter.origin !== ORIGIN) {
+      const stamp = this.now().toISOString().replace(/[:.]/g, "-")
+      trashedTo = join(this.stateDir, "trash", stamp, relativePath)
+      mkdirSync(dirname(trashedTo), { recursive: true })
+      cpSync(filePath, trashedTo, { preserveTimestamps: true })
+    }
     try {
       unlinkSync(filePath)
     } catch {
-      return false
+      return { deleted: false }
     }
     this.writeIndex(removeIndexLine(this.readIndex(), relativePath))
-    return true
+    return trashedTo ? { deleted: true, trashedTo } : { deleted: true }
   }
 
   search(query: string): MemoryEntry[] {
@@ -136,15 +189,51 @@ export class MemoryStore {
   }
 
   private writeIndex(content: string): void {
-    writeFileSync(this.entrypoint, content, "utf-8")
+    writeFileAtomicSync(this.entrypoint, content)
   }
 
-  private isUnchanged(filePath: string, fileContent: string, pointer: string): boolean {
-    try {
-      if (readFileSync(filePath, "utf-8") !== fileContent) return false
-    } catch {
-      return false
-    }
-    return indexHasPointer(this.readIndex(), pointer)
+  // Unchanged means the same name, description, type and body, whatever else the frontmatter
+  // holds, so an identical re-save neither bumps `modified` nor stamps provenance.
+  private isUnchanged(
+    parsed: ParsedMemoryFile,
+    relativePath: string,
+    input: SaveMemoryInput,
+    pointer: string,
+  ): boolean {
+    const { frontmatter, body, hasFrontmatter } = parsed
+    if (!hasFrontmatter) return false
+    // Missing fields compare as the defaults the scanner (and `read()`) reports for them.
+    const same =
+      (frontmatter.name ?? nameFromFilename(relativePath)) === input.name &&
+      (frontmatter.description ?? "") === input.description &&
+      (parseMemoryType(frontmatter.type) ?? "user") === input.type &&
+      body.replace(/\r\n/g, "\n") === input.content.trim().replace(/\r\n/g, "\n")
+    return same && indexHasPointer(this.readIndex(), pointer)
   }
+}
+
+function readTextFile(path: string): string | null {
+  try {
+    return readFileSync(path, "utf-8")
+  } catch {
+    return null
+  }
+}
+
+// Updates an existing memory in place: name, description, type and body change, every other
+// frontmatter line is kept. The type and `modified` are written wherever the file already keeps
+// them (top level in older files, under `metadata:` otherwise, both when it has both), and a file
+// this plugin did not create gains `metadata.updatedBy: opencode` while its own `origin` stays.
+function updatedFileContent(
+  existing: string,
+  parsed: ParsedMemoryFile,
+  input: SaveMemoryInput,
+  modified: string,
+): string {
+  return editFrontmatter(existing, {
+    set: { name: input.name, description: input.description },
+    setWhereExists: { type: input.type, modified },
+    setMeta: parsed.frontmatter.origin === ORIGIN ? {} : { updatedBy: ORIGIN },
+    body: input.content,
+  })
 }
