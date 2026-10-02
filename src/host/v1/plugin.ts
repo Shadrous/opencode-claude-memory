@@ -30,6 +30,7 @@ export const createMemoryPlugin =
     const deps = { store, config, host, owned, log }
     const recall = new V1RecallCoordinator(deps)
     const extraction = new V1ExtractionCoordinator(deps)
+    log("info", "opencode-claude-memory loaded", { directory: dir, memoryDir: store.memoryDir })
 
     return {
       config: async (cfg) => {
