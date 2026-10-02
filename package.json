@@ -16,7 +16,7 @@
     "dist"
   ],
   "engines": {
-    "opencode": ">=1.18.0"
+    "opencode": ">=1.18.29"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
@@ -58,7 +58,16 @@
   ],
   "license": "MIT",
   "peerDependencies": {
-    "@opencode-ai/plugin": ">=1.18.0"
+    "@opencode-ai/plugin": ">=1.18.29",
+    "@opencode/plugin": ">=2.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@opencode-ai/plugin": {
+      "optional": true
+    },
+    "@opencode/plugin": {
+      "optional": true
+    }
   },
   "dependencies": {
     "zod": "^3.25.0"

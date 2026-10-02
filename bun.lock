@@ -18,8 +18,13 @@
         "typescript": "^6.0.2",
       },
       "peerDependencies": {
-        "@opencode-ai/plugin": ">=1.18.0",
+        "@opencode-ai/plugin": ">=1.18.29",
+        "@opencode/plugin": ">=2.0.0",
       },
+      "optionalPeers": [
+        "@opencode-ai/plugin",
+        "@opencode/plugin",
+      ],
     },
   },
   "packages": {
