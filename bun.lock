@@ -5,7 +5,7 @@
     "": {
       "name": "opencode-claude-memory",
       "dependencies": {
-        "zod": "^3.24.0",
+        "zod": "^3.25.0",
       },
       "devDependencies": {
         "@biomejs/biome": "^2",

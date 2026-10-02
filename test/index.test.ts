@@ -3,9 +3,9 @@ import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import type { PluginInput } from "@opencode-ai/plugin"
 import { MEMORY_AGENTS } from "../src/config.js"
+import type { PluginConfig } from "../src/host/v1/sdk.js"
 import plugin, { createMemoryPlugin, MemoryOptionsSchema, MemoryPlugin, MemoryStore, PLUGIN_ID } from "../src/index.js"
 import { AUTO_MEMORY_MARKER } from "../src/prompt/systemPrompt.js"
-import type { PluginConfig } from "../src/sdk.js"
 import {
   callOptions,
   cleanupTempDirs,
