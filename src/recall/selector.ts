@@ -42,6 +42,22 @@ export type SelectRelevantMemoryFilenamesInput = {
 }
 
 function tryParseSelectedMemories(raw: string): string[] | undefined {
+  // Forks without structured-output support (V2 prompt) answer in free text, often fenced.
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/)
+  const candidates = fenced?.[1] !== undefined ? [fenced[1], raw] : [raw]
+  for (const candidate of candidates) {
+    const direct = parseSelectedMemories(candidate.trim())
+    if (direct) return direct
+    // Scan for an embedded JSON object mentioning selected_memories.
+    for (const match of candidate.matchAll(/\{[^{}]*"selected_memories"[^{}]*\}/g)) {
+      const parsed = parseSelectedMemories(match[0])
+      if (parsed) return parsed
+    }
+  }
+  return undefined
+}
+
+function parseSelectedMemories(raw: string): string[] | undefined {
   try {
     const parsed = JSON.parse(raw) as { selected_memories?: unknown }
     if (!Array.isArray(parsed.selected_memories)) return undefined

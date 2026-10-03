@@ -1,4 +1,5 @@
-import type { Plugin, PluginModule } from "@opencode-ai/plugin"
+import { Plugin as V2Plugin } from "@opencode/plugin"
+import type { Plugin } from "@opencode-ai/plugin"
 import { AgentRegistry } from "./agents.js"
 import { parseConfig } from "./config.js"
 import { ExtractionCoordinator } from "./extraction/ExtractionCoordinator.js"
@@ -10,6 +11,7 @@ import { resolveMemoryRoot } from "./store/paths.js"
 import { buildMemoryTools } from "./tools.js"
 import { createLogger } from "./util/log.js"
 import { OwnedSessions } from "./util/ownedSessions.js"
+import { setupV2 } from "./v2/setup.js"
 
 export const PLUGIN_ID = "opencode-claude-memory"
 
@@ -67,7 +69,17 @@ export const createMemoryPlugin =
 
 export const MemoryPlugin: Plugin = createMemoryPlugin()
 
-const plugin: PluginModule = { id: PLUGIN_ID, server: MemoryPlugin }
+// Dual V1 + V2 entrypoint (see https://opencode.ai/v2/docs/build/plugins/migrate-v1):
+// V1 calls `server()` and uses the returned hooks; V2 reads `id` and `setup()` and ignores
+// `server()`. The V1 object form needs OpenCode >= 1.18.29; the function form above keeps
+// working on older V1 releases.
+const plugin = {
+  ...V2Plugin.define({
+    id: PLUGIN_ID,
+    setup: (ctx) => setupV2(ctx),
+  }),
+  server: MemoryPlugin,
+}
 export default plugin
 
 export { MEMORY_AGENTS, type MemoryConfig, type MemoryOptions, MemoryOptionsSchema } from "./config.js"

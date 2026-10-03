@@ -29,12 +29,17 @@ Claude Code writes memory → OpenCode reads it. OpenCode writes memory → Clau
 
 ## 🚀 Quick Start
 
-Requires OpenCode **≥ 1.18**.
+Requires OpenCode **≥ 1.18** (V1) or **≥ 2.0** (V2) — one package supports both.
 
 ```jsonc
 // opencode.json (project) or ~/.config/opencode/opencode.json (global)
+// OpenCode 1.x:
 {
   "plugin": ["opencode-claude-memory"]
+}
+// OpenCode 2.x (desktop):
+{
+  "plugins": ["opencode-claude-memory"]
 }
 ```
 
@@ -68,7 +73,7 @@ State that is private to the plugin (watermarks, auto-dream gate, lock) lives in
 All behaviour is configured through OpenCode's own configuration. There are no `OPENCODE_MEMORY_*` environment variables.
 
 ```jsonc
-// opencode.json
+// opencode.json — OpenCode 1.x
 {
   "plugin": [
     ["opencode-claude-memory", {
@@ -83,11 +88,20 @@ All behaviour is configured through OpenCode's own configuration. There are no `
     "opencode-memory-dream":   { "model": "anthropic/claude-sonnet-5" }
   }
 }
+// OpenCode 2.x — same options, object form under `plugins`:
+{
+  "plugins": [
+    { "package": "opencode-claude-memory", "options": {
+      "extract": { "enabled": true, "debounceMs": 10000 }
+    } }
+  ]
+}
 ```
 
 - Every option above is optional; the values shown are the defaults. Unknown keys are rejected when the plugin loads.
 - When the same plugin is listed in both the global and the project `opencode.json`, OpenCode keeps the **last** declaration (project wins); options are not merged across files.
 - The three agents are registered hidden with a memory-only tool sandbox. Override any field (`model`, `steps`, `temperature`, …) under `agent.<name>`; the plugin fills in the rest.
+- On OpenCode 2.x the equivalents are `system` (was `prompt`), `permissions` (was `tools`: deny-all, then allow the memory tools) and `steps`. V2 agent transforms cannot create agents, so forks run on the default agent — with the same system prompt, tool sandbox and temperature applied per request — unless you define the named agent yourself (e.g. to pin a model); the plugin then fills in whatever you left unset.
 - `CLAUDE_CONFIG_DIR` is honoured exactly like Claude Code does, and is the only environment variable the plugin reads.
 
 Logs go to the OpenCode service log (`opencode` log directory, service `opencode-claude-memory`).

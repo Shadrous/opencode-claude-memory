@@ -110,6 +110,9 @@ export type ExtractionCoordinatorDeps = {
   now?: () => number
   state?: ExtractionStateStore
   lock?: MaintenanceLock
+  // Session listing for start-up catch-up. Defaults to `client.session.list`, which V2 plugins
+  // cannot call (no `list` on the session domain); V2 passes a plugin-storage-backed lister.
+  listSessions?: () => Promise<SessionInfo[]>
 }
 
 type Snapshot = {
@@ -225,12 +228,13 @@ export class ExtractionCoordinator {
     if (config.extract.catchUpLimit <= 0) return
     let sessions: SessionInfo[]
     try {
-      sessions =
-        unwrapData<SessionInfo[]>(
-          await withDeadline("session.list", SDK_READ_TIMEOUT_MS, (signal) =>
-            client.session.list({ query: { directory }, signal }),
-          ),
-        ) ?? []
+      sessions = this.deps.listSessions
+        ? await this.deps.listSessions()
+        : (unwrapData<SessionInfo[]>(
+            await withDeadline("session.list", SDK_READ_TIMEOUT_MS, (signal) =>
+              client.session.list({ query: { directory }, signal }),
+            ),
+          ) ?? [])
     } catch (error) {
       log("warn", "Extraction catch-up could not list sessions", { error: getErrorMessage(error) })
       return

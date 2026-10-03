@@ -37,7 +37,10 @@ const DB_MEMORY = {
 
 describe("plugin module shape", () => {
   test("default export is a PluginModule and the named exports are the public API", () => {
-    expect(plugin).toEqual({ id: PLUGIN_ID, server: MemoryPlugin })
+    expect(plugin.id).toBe(PLUGIN_ID)
+    expect(plugin.server).toBe(MemoryPlugin)
+    // V2 entrypoint (https://opencode.ai/v2/docs/build/plugins/migrate-v1).
+    expect(typeof plugin.setup).toBe("function")
     expect(typeof MemoryPlugin).toBe("function")
     expect(typeof createMemoryPlugin).toBe("function")
     expect(MemoryOptionsSchema.safeParse({}).success).toBe(true)

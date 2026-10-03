@@ -1,14 +1,21 @@
 # AGENTS.md
 
-OpenCode plugin that replicates Claude Code's persistent memory system. TypeScript on Bun; published to npm as compiled `dist/` via semantic-release. Requires OpenCode ≥ 1.18 (plugin options, `PluginModule` default export).
+OpenCode plugin that replicates Claude Code's persistent memory system. TypeScript on Bun; published to npm as compiled `dist/` via semantic-release. Dual runtime: V1 (`server()`, OpenCode ≥ 1.18) and V2 (`setup()`, OpenCode ≥ 2.0) from one `dist/index.js` default export (`{ id, setup, server }`).
 
 ## Structure
 
 ```
 src/
-├── index.ts                      # Assembly only: parseConfig → MemoryStore → coordinators → Hooks. Default export { id, server }.
+├── index.ts                      # Dual entrypoint: V2 `Plugin.define({ id, setup })` + V1 `server: MemoryPlugin`.
 ├── config.ts                     # PluginOptions zod schema (strict) + CLAUDE_CONFIG_DIR → MemoryConfig; fixed agent names
-├── agents.ts                     # Hidden agent defaults (recall/extract/dream) merged under user overrides in the `config` hook
+├── agents.ts                     # V1 hidden agent defaults (recall/extract/dream) merged under user overrides in the `config` hook
+├── v2/
+│   ├── setup.ts                  # V2 setup(): agent/tool transforms, `context` hook (recall + fork sandbox), event loop, storage-backed catch-up sessions
+│   ├── client.ts                 # V1-shaped client over ctx.session (prompt→wait→read synthesis, `{ data }` re-wrap, console app.log)
+│   ├── messages.ts               # SessionMessageInfo[] / request Message[] → ChatMessage adapters
+│   ├── tools.ts                  # memory_* tools as V2 JSON-Schema definitions returning `{ content }`
+│   ├── agents.ts                 # V2 agent defaults (system/steps/permissions) + fork tool policies
+│   └── types.ts                  # Aliases derived from @opencode/plugin
 ├── sdk.ts                        # Type aliases derived from @opencode-ai/plugin (client, events, messages) + unwrapData
 ├── tools.ts                      # memory_save / delete / list / search / read; results carry their own titles
 ├── store/
@@ -72,7 +79,14 @@ test/
 - **No environment variables except `CLAUDE_CONFIG_DIR`** (read in `config.ts` only). Tests inject `env` and the home directory via `createMemoryPlugin(env, homeDir)` / `parseConfig(options, env, homeDir)` and never write `process.env` or read the real home.
 - **Every SDK call has a deadline** (`util/timeout.ts` `withDeadline`): the SDK disables fetch timeouts, so an unbounded `await client.session.*` can pin the extraction queue and the maintenance lock forever.
 - **State is transactional**: `ExtractionStateStore.update()` runs under a file lock and the mutate callback must decide against the data it is given, never against an earlier snapshot. The maintenance lock is held until the watermark is written.
-- **Logging** goes through `client.app.log` (`util/log.ts`); stderr is rendered into the chat UI.
+- **Logging** goes through `client.app.log` (`util/log.ts`) on V1; stderr is rendered into the chat UI.
+  V2 has no `app.log`, so the V2 path logs through `createConsoleLogger()` instead.
+- **V2 deltas**: one `context` hook replaces both chat transforms; `session.list` does not exist
+  on the V2 session domain, so start-up catch-up replays seen sessions from plugin storage
+  (`seen-sessions`); agent transforms cannot add agents, so forks fall back to the default agent
+  with system/tools/temperature applied by the context hook; tool results return `{ content }`
+  (V2 has no `title`); the recall selector parses fenced JSON because V2 prompts have no
+  structured-output `format`.
 - **Silent catch blocks** around file I/O are intentional (files may not exist).
 - **`@opencode-ai/plugin`** is a peer dependency; SDK types are derived in `src/sdk.ts` — do not hand-write client subsets.
 
