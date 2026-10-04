@@ -30,6 +30,14 @@ function objectSchema(properties: Record<string, unknown>, required: string[] = 
 
 const FILE_NAME_HINT = 'with or without the .md extension; sub-directories are allowed, e.g. "team/conventions"'
 
+// Shown when Code Mode folds this tool into the `execute` catalog instead of
+// emitting it as a native tool definition: a direct call then fails with
+// 'No tool named "<name>"'. Tell the model how to recover instead of letting
+// it invent workarounds.
+function codemodeNote(name: string): string {
+  return ` If "${name}" is not in your tool list (Code Mode sessions expose it only through the execute tool), call it as tools.${name} inside execute.`
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object") throw new Error("opencode-claude-memory: tool input must be an object")
   return value as Record<string, unknown>
@@ -56,7 +64,7 @@ export function buildV2MemoryTools(
         "Use this when the user explicitly asks you to remember something, " +
         "or when you observe important information worth preserving across sessions " +
         "(user preferences, feedback, project context, external references). " +
-        "Check existing memories first with memory_list or memory_search to avoid duplicates.",
+        `Check existing memories first with memory_list or memory_search to avoid duplicates.${codemodeNote("memory_save")}`,
       input: objectSchema({
         file_name: stringProperty(
           'File name for the memory (without .md extension). Use snake_case, e.g. "user_role", "feedback_testing_style", "project_auth_rewrite"; a sub-directory prefix such as "team/conventions" is allowed',
@@ -91,7 +99,7 @@ export function buildV2MemoryTools(
 
     {
       name: "memory_delete",
-      description: "Delete a memory that is outdated, wrong, or no longer relevant. Also removes it from the index.",
+      description: `Delete a memory that is outdated, wrong, or no longer relevant. Also removes it from the index.${codemodeNote("memory_delete")}`,
       input: objectSchema({
         file_name: stringProperty(`File name of the memory to delete (${FILE_NAME_HINT})`),
       }),
@@ -113,8 +121,8 @@ export function buildV2MemoryTools(
       name: "memory_list",
       description:
         "List all saved memories with their names, types, and descriptions. " +
-        "Use this to check what memories exist before saving a new one (to avoid duplicates) " +
-        "or when you need to recall what's been stored.",
+        `Use this to check what memories exist before saving a new one (to avoid duplicates) ` +
+        `or when you need to recall what's been stored.${codemodeNote("memory_list")}`,
       input: objectSchema({}, []),
       async execute() {
         const entries = store.list()
@@ -127,8 +135,8 @@ export function buildV2MemoryTools(
     {
       name: "memory_search",
       description:
-        "Search memories by keyword. Searches across names, descriptions, and content. " +
-        "Use this to find relevant memories before answering questions or when the user references past conversations.",
+        `Search memories by keyword. Searches across names, descriptions, and content. ` +
+        `Use this to find relevant memories before answering questions or when the user references past conversations.${codemodeNote("memory_search")}`,
       input: objectSchema({
         query: stringProperty("Search query — searches across name, description, and content"),
       }),
@@ -147,7 +155,7 @@ export function buildV2MemoryTools(
 
     {
       name: "memory_read",
-      description: "Read the full content of a specific memory file.",
+      description: `Read the full content of a specific memory file.${codemodeNote("memory_read")}`,
       input: objectSchema({
         file_name: stringProperty(`File name of the memory to read (${FILE_NAME_HINT})`),
       }),
